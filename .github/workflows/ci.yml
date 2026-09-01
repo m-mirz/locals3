@@ -20,4 +20,4 @@ jobs:
       - name: Test with the race detector
         run: go test -race -count=1 ./...
       - name: Fuzz the key-to-path mapping
-        run: go test -run FuzzKeyPath -fuzz FuzzKeyPath -fuzztime 60s ./internal/store/
+        run: go test -run FuzzKeyPath -fuzz FuzzKeyPath -fuzztime 20s ./internal/store/

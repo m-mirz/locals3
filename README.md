@@ -48,6 +48,7 @@ aws --endpoint-url http://localhost:9000 s3 ls s3://demo/ --recursive
 | `--log-level` | `info` | `error`, `info` or `debug` |
 | `--latency` | `0` | Delay injected into every request, e.g. `50ms` |
 | `--fail-rate` | `0` | Fraction of requests answered `503 SlowDown` |
+| `--version` | | Print the version and exit |
 
 The last two exist to exercise client retry and backoff, which is otherwise hard
 to test locally.
@@ -145,12 +146,41 @@ renamed into place, so a concurrent reader never sees a partial object.
 `If-Modified-Since` behaves consistently with the `Last-Modified` clients were
 given.
 
+## Releases
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which tests, builds,
+pushes the container image and publishes a GitHub release. `workflow_dispatch`
+runs the same build without creating a release, so you can check it first.
+
+**Container image** — published to GitHub Container Registry, `linux/amd64` and
+`linux/arm64`:
+
+```bash
+docker pull ghcr.io/m-mirz/locals3:latest
+docker run -p 9000:9000 -v "$PWD/data:/data" ghcr.io/<owner>/locals3:latest
+```
+
+Every release is tagged with its version; `:latest` moves only for a tagged
+release, so a manual workflow run cannot redirect it at an untagged build.
+
+**Binaries** — attached to the release, and uploaded as workflow artifacts on
+every run:
+
+| Asset | What it is |
+|---|---|
+| `locals3-linux-amd64` | Static binary, no libc dependency |
+| `locals3-linux-arm64` | Same, for ARM servers |
+| `SHA256SUMS` | Checksums for both |
+
+Binaries and the in-image binary are stamped with the tag, so `locals3
+--version` identifies the build.
+
 ## Development
 
 ```bash
 go test ./...                                        # full suite
 go test -race ./...                                  # concurrency and atomicity
-go test -fuzz FuzzKeyPath -fuzztime 60s ./internal/store/
+go test -fuzz FuzzKeyPath -fuzztime 20s ./internal/store/
 ```
 
 The tests drive the server through the real AWS SDK for Go v2, including

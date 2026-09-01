@@ -16,6 +16,10 @@ import (
 	"github.com/mmirz/locals3"
 )
 
+// version is stamped at build time with -ldflags "-X main.version=<tag>".
+// Builds made outside the release workflow report "dev".
+var version = "dev"
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "locals3:", err)
@@ -33,8 +37,14 @@ func run() error {
 		logLevel   = flag.String("log-level", "info", "error, info or debug")
 		latency    = flag.Duration("latency", 0, "delay injected into every request")
 		failRate   = flag.Float64("fail-rate", 0, "fraction of requests answered with 503 SlowDown")
+		showVer    = flag.Bool("version", false, "print the version and exit")
 	)
 	flag.Parse()
+
+	if *showVer {
+		fmt.Println("locals3", version)
+		return nil
+	}
 
 	level, err := parseLevel(*logLevel)
 	if err != nil {
@@ -62,7 +72,7 @@ func run() error {
 	}
 
 	log.Info("locals3 listening",
-		"addr", *addr, "dir", srv.Dir(), "region", *region,
+		"version", version, "addr", *addr, "dir", srv.Dir(), "region", *region,
 		"auto_create", *autoCreate)
 	fmt.Fprintf(os.Stderr, "\n  export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=%s\n"+
 		"  aws --endpoint-url http://localhost%s s3 ls\n\n", *region, portOf(*addr))

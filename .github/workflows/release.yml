@@ -1,0 +1,126 @@
+name: Build Release Assets
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    name: Build Linux binaries and push image to GHCR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      # A release must not ship a build that does not pass its own suite.
+      - name: Test
+        run: go test -race -count=1 ./...
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Linux binaries
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build \
+              -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+              -o "locals3-linux-$arch" ./cmd/locals3
+          done
+          ./locals3-linux-amd64 --version
+
+      - name: Checksums
+        run: |
+          sha256sum locals3-linux-amd64 locals3-linux-arm64 > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: image
+        run: |
+          # Registry paths must be lowercase; repository names need not be.
+          name="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          tags="$name:${{ steps.version.outputs.version }}"
+          # :latest only ever moves for a real tagged release, so a manual run
+          # cannot redirect it at an untagged build.
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            tags="$tags,$name:latest"
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.image.outputs.tags }}
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: locals3-${{ steps.version.outputs.version }}
+          path: |
+            locals3-linux-amd64
+            locals3-linux-arm64
+            SHA256SUMS
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ steps.image.outputs.name }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "Release $TAG" \
+            --generate-notes \
+            locals3-linux-amd64 \
+            locals3-linux-arm64 \
+            SHA256SUMS
+
+          # Prepend the image reference to the generated notes, so the release
+          # page mentions the container image as well as the binaries. Done as
+          # a follow-up edit rather than by combining --generate-notes with
+          # --notes-file, which would let an untested flag combination decide
+          # the outcome of a release whose image is already published.
+          {
+            echo '## Container image'
+            echo
+            echo '```'
+            echo "docker pull $IMAGE:$TAG"
+            echo '```'
+            echo
+            gh release view "$TAG" --json body --jq .body
+          } > release-notes.md
+          gh release edit "$TAG" --notes-file release-notes.md
